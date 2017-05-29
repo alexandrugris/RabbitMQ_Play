@@ -12,8 +12,7 @@ namespace RabbitMQ_Consumer
         
         public Consumer() : base()
         {
-            var cf = new ConnectionFactory { Uri = Commons.Parameters.RabbitMQConnectionString };
-            var conn = cf.CreateConnection();
+            var conn = Commons.Parameters.RabbitMQConnection;
 
             chan = conn.CreateModel();
 
@@ -29,14 +28,16 @@ namespace RabbitMQ_Consumer
             {
                 var msg = JsonConvert.DeserializeObject<Commons.Message>(Encoding.UTF8.GetString(body));
 
-                Console.WriteLine($"Message: {msg.Msg} from thread: {msg.ThreadID}, version: {msg.Version}, version_two_field: {msg.FieldAddedInVersion2}");
+                Console.WriteLine($"Message: {msg.Msg} from thread: {msg.ThreadID}, version: {msg.Version}, version_two_field: {msg.FieldAddedInVersion2}, CorrID: ${properties.CorrelationId}");
 
                 chan.BasicAck(deliveryTag, false); // send ack only for this message and only if no error so far
-
             }
             catch (Exception e)
             {
                 Console.Out.WriteLine(e.ToString());
+
+                chan.BasicNack(deliveryTag, false, true); // in case of an error send a not-ack  and tell the queue to redeliver the message. Can be missed and relied on the queue to self n-ack
+            
                 throw e; // throw further
             }            
         }
@@ -49,8 +50,8 @@ namespace RabbitMQ_Consumer
             chan.QueueDeclare(
                     queue: Commons.Parameters.RabbitMQQueueName,
                     durable: false,
-                    exclusive: false, // what does this mean?
-                    autoDelete: false, // when does it autodelete?
+                    exclusive: false, 
+                    autoDelete: false, 
                     arguments: null
                     );
 

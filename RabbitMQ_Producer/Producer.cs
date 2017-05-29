@@ -15,8 +15,7 @@ namespace RabbitMQ_Producer
 
         Producer()
         {
-            var cf = new ConnectionFactory { Uri = Commons.Parameters.RabbitMQConnectionString };
-            conn = cf.CreateConnection(); // one connection, one channel per Thread
+            conn = Commons.Parameters.RabbitMQConnection;
         }
 
         #region IDisposable Support
@@ -47,48 +46,84 @@ namespace RabbitMQ_Producer
         #endregion
 
         int msg_id = -1;
-        
-        public void Produce()
-        {
-            using (var chan = conn.CreateModel()) // this is a little bit forced because the threads will be recycled
-            {
-                chan.ExchangeDeclare(
-                    exchange:   Commons.Parameters.RabbitMQExchangeName,
-                    type:       ExchangeType.Direct,
-                    durable:    false, // no serialization
-                    autoDelete: false,
-                    arguments:  null
-                    );
 
-                chan.QueueDeclare(
-                    queue: Commons.Parameters.RabbitMQQueueName,
-                    durable: false,
-                    exclusive: false, // what does this mean?
-                    autoDelete: false, // when does it autodelete?
+        private void ChanConfig(IModel chan)
+        {
+            chan.ExchangeDeclare(
+                    exchange: Commons.Parameters.RabbitMQExchangeName,
+                    type: ExchangeType.Direct, // change to Fanout to send to several queues
+                    durable: false, // no serialization
+                    autoDelete: false,
                     arguments: null
                     );
 
-                chan.QueueBind(
-                    queue: Commons.Parameters.RabbitMQQueueName,
-                    exchange: Commons.Parameters.RabbitMQExchangeName,
-                    routingKey: "");
+            chan.QueueDeclare(
+                queue: Commons.Parameters.RabbitMQQueueName,
+                durable: false,
+                exclusive: false, // what does this mean?
+                autoDelete: false, // when does it autodelete?
+                arguments: null
+                );
 
-                Interlocked.Increment(ref msg_id);
+            chan.QueueBind(
+                queue: Commons.Parameters.RabbitMQQueueName,
+                exchange: Commons.Parameters.RabbitMQExchangeName,
+                routingKey: "");
 
-                var msg = JsonConvert.SerializeObject(new Commons.Message()
+            /// for publisher to get confirmation that the message has been received by the queue:
+
+            
+            chan.ConfirmSelect();
+            chan.BasicAcks += (o, args) =>
+            {
+                bool closed = chan.IsClosed; // msg is received even after the channel is closed
+                // https://stackoverflow.com/questions/20095049/rabbitmq-deliverytag-always-1 - why?
+                Console.WriteLine($"Msg confimed {args.DeliveryTag}");
+            };
+            chan.BasicNacks += (o, args) => Console.WriteLine($"Error sending message to queue {args.DeliveryTag}");
+        }
+        
+
+        public void Produce()
+        {
+            bool msg_sent = false;
+            while (!msg_sent)
+            {
+                try
                 {
-                    Msg = "Hello World",
-                    ThreadID = System.Threading.Thread.CurrentThread.ManagedThreadId,
-                    MsgID = msg_id,
-                    FieldAddedInVersion2 = "Hello World"
-                });
+                    using (var chan = conn.CreateModel()) // this is a little bit forced because the threads will be recycled
+                    {
 
-                var msgProps = chan.CreateBasicProperties();
-                msgProps.ContentType = "application/json";
+                        ChanConfig(chan);
+                        ChanSendMessage(chan);
+                        msg_sent = true;
 
-                chan.BasicPublish(Commons.Parameters.RabbitMQExchangeName, "", msgProps, Encoding.UTF8.GetBytes(msg));
-
+                    }
+                }
+                catch (Exception)
+                {
+                    Thread.Sleep(1000);
+                }
             }
+        }
+
+        private void ChanSendMessage(IModel chan)
+        {
+            Interlocked.Increment(ref msg_id);
+
+            var msg = JsonConvert.SerializeObject(new Commons.Message()
+            {
+                Msg = "Hello World",
+                ThreadID = System.Threading.Thread.CurrentThread.ManagedThreadId,
+                MsgID = msg_id,
+                FieldAddedInVersion2 = "Hello World"
+            });
+
+            var msgProps = chan.CreateBasicProperties();
+            msgProps.ContentType = "application/json";
+            msgProps.CorrelationId = Guid.NewGuid().ToString(); // set a correlation id to the message
+
+            chan.BasicPublish(Commons.Parameters.RabbitMQExchangeName, "", msgProps, Encoding.UTF8.GetBytes(msg));
         }
 
         static void Main(string[] args)

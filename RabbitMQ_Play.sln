@@ -7,7 +7,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RabbitMQ_Producer", "Rabbit
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RabbitMQ_Consumer", "RabbitMQ_Consumer\RabbitMQ_Consumer.csproj", "{CFD62440-D607-4C9C-8F0D-E291CC486FFF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Commons", "Commons\Commons.csproj", "{5AB31A19-D078-4E0A-BF9F-02ED1085D2E1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RabbitMQ_Commons", "Commons\RabbitMQ_Commons.csproj", "{5AB31A19-D078-4E0A-BF9F-02ED1085D2E1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

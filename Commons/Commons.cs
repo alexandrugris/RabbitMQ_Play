@@ -2,11 +2,39 @@
 
 namespace Commons
 {
-    public class Parameters
+    public static class Parameters
     {
-        public static string RabbitMQConnectionString = "amqp://guest:guest@localhost:5672";
-        public static string RabbitMQExchangeName  = "alexandrugris.1st_exchange";
-        public static string RabbitMQQueueName = "alexandrugris.1st_queue";
+        public const string RabbitMQConnectionString = "amqp://guest:guest@localhost:5672";
+        public const string RabbitMQExchangeName  = "alexandrugris.1st_exchange";
+        public const string RabbitMQQueueName = "alexandrugris.1st_queue";
+
+        /// <summary>
+        /// TODO
+        /// </summary>
+        public static RabbitMQ.Client.IConnection RabbitMQConnection
+        {
+            get
+            {  
+                if (conn == null || !conn.IsOpen)
+                {
+                    var cf = new RabbitMQ.Client.ConnectionFactory
+                    {
+                        Uri = Commons.Parameters.RabbitMQConnectionString,
+                        AutomaticRecoveryEnabled = true,
+                        TopologyRecoveryEnabled = true,
+                        NetworkRecoveryInterval = TimeSpan.FromSeconds(5),
+                        UseBackgroundThreadsForIO = false // this is related to Thread.IsBackground property; Foreground threads keep the app alive until finished
+                    };
+
+                    conn = cf.CreateConnection();
+                }
+
+                return conn;
+            }
+        }
+
+        private static RabbitMQ.Client.IConnection conn = null;
+
     }
 
     public class Message

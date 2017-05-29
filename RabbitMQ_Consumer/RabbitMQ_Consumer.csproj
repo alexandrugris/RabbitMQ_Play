@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Commons\Commons.csproj" />
+    <ProjectReference Include="..\Commons\RabbitMQ_Commons.csproj" />
   </ItemGroup>
 
 </Project>
