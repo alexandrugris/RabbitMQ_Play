@@ -60,8 +60,8 @@ namespace RabbitMQ_Producer
             chan.QueueDeclare(
                 queue: Commons.Parameters.RabbitMQQueueName,
                 durable: false,
-                exclusive: false, // what does this mean?
-                autoDelete: false, // when does it autodelete?
+                exclusive: false, 
+                autoDelete: false, 
                 arguments: null
                 );
 

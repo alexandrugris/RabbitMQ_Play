@@ -18,7 +18,9 @@ Within a connection, one or more channels can coexist to provide for concurrency
 Producers write to an exchange. Exchanges can communicate to queues or other exchanges through binding. Consumers read from queues. One service monitors one or more queues. Oldest message is consumed first.
 Only when the queue receives the ACK, the message is deleted from the queue. Producers write to exchanges using a routing key. The exchange will route the message to the corresponding queue based on the routing key.
 
-Inside the client, for receiving messages, one can set `prefetchCount` to load multiple messages. However, if the server crashes, these will remain unacknowledged even if processed:
+More details, here: https://www.rabbitmq.com/tutorials/amqp-concepts.html
+
+Inside the client, for receiving messages, one can set `prefetchCount` to load multiple messages. However, if the server crashes, these will all remain unacknowledged even if processed:
 
 ```csharp
 	if (cthread != System.Threading.Thread.CurrentThread.ManagedThreadId)
@@ -26,9 +28,9 @@ Inside the client, for receiving messages, one can set `prefetchCount` to load m
 
     chan.QueueDeclare(
              queue: Commons.Parameters.RabbitMQQueueName,
-             durable: false,
-             exclusive: false, 
-             autoDelete: false, 
+             durable: false,	// messages will not be persisted to disk. ATTENTION: even if set to true, each message should have the durable: true flag turn on for persistence
+             exclusive: false,  // if set to true, can only be consumed by this connection. publishing is free though. Used by RPC pattern
+             autoDelete: false, // if true, queue is deleted when there are no more consumers. however, if there are no consumers ever on the queue, it is not deleted
              arguments: null
              );
 
@@ -41,11 +43,47 @@ Inside the client, for receiving messages, one can set `prefetchCount` to load m
     chan.BasicConsume(Commons.Parameters.RabbitMQQueueName, noAck: false, consumer: this);
 ```
 
-# Direct Exchange
+And then
 
-Routing keys can have several terms separated by dots. E.g. `package.fast.international`. Queues listen to various keys by using wildcards. E.g. `package.*.international`. `*` is the wildcard for one word. `#` is the hashtag for multiple words.
+```csharp
+class Consumer : DefaultBasicConsumer, IDisposable
+    {
+        private IModel chan = null;    
+        private int cthread = System.Threading.Thread.CurrentThread.ManagedThreadId;
+       
+	   [...]
+       
+        public override void HandleBasicDeliver(string consumerTag, ulong deliveryTag, bool redelivered, string exchange, string routingKey, IBasicProperties properties, byte[] body)
+        {
+            if (properties.ContentType != "application/json")
+                throw new ArgumentException("We handle only json messages");
 
-# Fanout Exchange
+            try
+            {
+                var msg = JsonConvert.DeserializeObject<Commons.Message>(Encoding.UTF8.GetString(body));
+                Console.WriteLine($"Message: {msg.Msg} from thread: {msg.ThreadID}, version: {msg.Version}, version_two_field: {msg.FieldAddedInVersion2}, CorrID: ${properties.CorrelationId}");
+                chan.BasicAck(deliveryTag, false); // send ack only for this message and only if no error so far
+            }
+            catch (Exception e)
+            {
+                Console.Out.WriteLine(e.ToString());
+
+				// in case of an error send a not-ack  and tell the queue to redeliver the message. Can be missed and relied on the queue to self n-ack
+                chan.BasicNack(deliveryTag, false, true);             
+                throw e; // throw further
+            }            
+        }
+```
+
+Another way to go is to use the `QueuingBasicConsumer(model)` and then `(BasicDeliveryEventArgs)consumer.Queue.Dequeue();` for extracting the message in a loop.
+
+# Routing keys
+
+### Topic Exchange
+
+Routing behaves very much like for the direct exchange. However, routing keys can have several terms separated by dots. E.g. `package.fast.international`. Queues listen to various keys by using wildcards. E.g. `package.*.international`. `*` is the wildcard for one word. `#` is the hashtag for multiple words.
+
+### Fanout Exchange
 
 The routing key is ignored. Message is sent to all bound queues.
 
@@ -58,14 +96,15 @@ The answer is yes, as the limit is not in the number of queues but in the number
  - https://stackoverflow.com/questions/22989833/rabbitmq-how-many-queues-rabbitmq-can-handle-on-a-single-server
  - http://rabbitmq.1065348.n5.nabble.com/How-many-queues-can-one-broker-support-td21539.html
  - https://www.rabbitmq.com/distributed.html
- - RPC-like calls: http://www.rabbitmq.com/tutorials/tutorial-six-dotnet.html
 
 # Microservices
 
-As each microservice is persisting its data in ins own private database, with private indices, one needs a method for correlating various messages into a single logical entity. RabbitMQ provides a correlation ID property for the messange. A good value for it is a GUID.
+As each microservice is persisting its data in ins own private database, with private indices, one needs a method for correlating various messages into a single logical entity. RabbitMQ provides a correlation ID property for the messange. A good value for it is a GUID. Correlation ID is also used for the RPC pattern in the response to the client.
 
  - http://jeftek.com/178/what-is-a-correlation-id-and-why-do-you-need-one/
- - https://stackoverflow.com/questions/20184755/practical-examples-of-how-correlation-id-is-used-in-messaging
+ - https://stackoverflow.com/questions/20184755/practical-examples-of-how-correlation-id-is-used-in-messaging 
+ - RPC-like calls: http://www.rabbitmq.com/tutorials/tutorial-six-dotnet.html
+
 
 # Reliability options
 
@@ -97,6 +136,50 @@ var cf = new RabbitMQ.Client.ConnectionFactory
 
 conn = cf.CreateConnection();
 ```
+
+Supported Scenarios:
+====================
+
+Basic patterns:
+
+- Simple one-way messaging (Exchange type: direct, message sent to unnamed (default queue)
+- Worker queues (Exchange type: direct, several consumer listening to the same queue, reading the messages in a round-robin fashion - if all waiting)
+- Publish-subscribe (Exchange type: fan-out, routing key is ignored, message is sent to all queues bound to the exchange)
+- RPC (Exchange type: direct, message can be sent to default exchange with a specified routing key and response is received on a specified unique response queue, owned by the client)
+
+Advanced patterns:
+
+- Routing (Exchange Type: direct, message is sent to a named exchange, routing key is specified so information only reaches the queues matching the pattern)
+- Topic (Exchange type: topic. Routing key is a string separated by dots and wildcards. E.g.: "ro.alexandrugris.*".)
+- Headers (Exchange type: headers. Message is sent to the queues which match the headers. Routing key should not be set. Match type should indicate if all or any header must match)
+- Scatter-gather (Exchange type: can be any, routing key is optional depending on the exchange type. The sender will start by creating and polling a response queue, then dispatch its request)
+
+Persistence
+===========
+
+Durability of a queue does not make messages that are routed to that queue durable. If broker is taken down and then brought back up, durable queue will be re-declared during broker startup, however, only persistent messages will be recovered. 
+
+Microservices:
+==============
+
+Design principles:
+
+- High Cohesion - single thing done well; single focus. Question to ask: "Can this change for more than one reason?"
+- Autonomous - independently changeable, independently deployable. Loosely coupled.
+- Business domain centric - single business function or domain.
+- Resilience - embrace failure by defaulting to a known basic functionality or degrade.
+- Observable - system health, centralized logging and monitoring. After all, it is a single system.
+- Automation - tools for testing and feedback, tools for deployment.
+
+Provisos:
+=========
+ - Longer development times.
+ - Cost and training for tools and new skills (queues, cloud, containers, distributed transaction coordinators, architecture paradigm).
+ - Handling distributed transactions and reporting.
+ - Additional testing resources: latency, performance, resilience. Tuning service timeouts.
+ - Improving the infrastructure: security, performance, reliability.
+ - Overhead to manage microservices: logging, reporting, continuous tracking of monitoring tools which involves also a culture change.
+
 
 
 

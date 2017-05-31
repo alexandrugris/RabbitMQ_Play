@@ -76,9 +76,8 @@ namespace RabbitMQ_Consumer
             using (var consumer = new Consumer())
             {
                 consumer.Consume();
-
-                System.Console.ReadKey();
-
+                System.Console.ReadKey();                
+                // another way to go is to use the QueuingBasicConsumer(model) and then (BasicDeliveryEventArgs)consumer.Queue.Dequeue(); for extracting the message
             }
         }
     }
