@@ -9,7 +9,7 @@ namespace RabbitMQ_Consumer
 {
     class SingleThreadedConsumer : DefaultBasicConsumer, IDisposable
     {
-        private IModel chan = null;    
+        private IModel chan = null;
         private int cthread = System.Threading.Thread.CurrentThread.ManagedThreadId;
         private readonly int MAX_RETRY_COUNT = 1;
 
@@ -18,23 +18,13 @@ namespace RabbitMQ_Consumer
             chan = conn.CreateModel();
         }
 
-        static Random rnd = new Random();
-
-        bool Crash
-        {
-            get
-            {
-                return rnd.Next() % 10 == 0;
-            }
-        }
-
         public override void HandleBasicDeliver(string consumerTag, ulong deliveryTag, bool redelivered, string exchange, string routingKey, IBasicProperties properties, byte[] body)
         {
             if (properties.ContentType != "application/json")
                 throw new ArgumentException("We handle only json messages");
 
-            if (!Crash) {
-
+            if (!Commons.Parameters.RandomEvent)
+            {
                 var msg = JsonConvert.DeserializeObject<Commons.Message>(Encoding.UTF8.GetString(body));
                 // Console.WriteLine($"Message: {msg.Msg} from thread: {msg.ThreadID}, version: {msg.Version}");
                 chan.BasicAck(deliveryTag, false); // send ack only for this message and only if no error so far
@@ -54,12 +44,12 @@ namespace RabbitMQ_Consumer
                     // first time simply put it back in the queue for another try
                     chan.BasicNack(deliveryTag, false, true);
                 }
-            }            
+            }
         }
 
         private int GetRetryCount(IBasicProperties properties)
         {
-            return  (int?)properties.Headers?["Retries"] ?? MAX_RETRY_COUNT;
+            return (int?)properties.Headers?["Retries"] ?? MAX_RETRY_COUNT;
         }
 
         private void SetRetryCount(IBasicProperties properties, int retryCount)
@@ -77,7 +67,7 @@ namespace RabbitMQ_Consumer
             if (retryCount > 0)
             {
                 SetRetryCount(properties, --retryCount);
-               
+
                 chan.BasicPublish(exchange, routingKey, properties, body);
                 chan.WaitForConfirmsOrDie(); // this is slow, but we need to make sure somehow the message reaches the queue back
                 chan.BasicAck(deliveryTag, false);
@@ -94,7 +84,7 @@ namespace RabbitMQ_Consumer
                 throw new Exception("Channel reused from a different thread");
 
             // topology of created in the producer
-            
+
             chan.BasicQos(
                 prefetchSize: 0, // no limit
                 prefetchCount: 1, // 1 by 1
@@ -106,24 +96,21 @@ namespace RabbitMQ_Consumer
             chan.BasicConsume(Commons.Parameters.RabbitMQQueueName, noAck: false, consumer: this);
 
         }
-        
+
         public void Dispose()
-        {           
+        {
             chan?.Dispose();
-            chan = null;            
+            chan = null;
         }
 
         static void Main(string[] args)
         {
             const int N = 10;
 
-            using (var conn = Commons.Parameters.RabbitMQConnection) {
-
+            using (var conn = Commons.Parameters.RabbitMQConnection)
+            {
                 var threads = new System.Collections.Generic.List<Thread>();
-
-                var waitfor = Task.Run(() => {
-                    Console.ReadKey();
-                });
+                var waitfor = new System.Threading.ManualResetEvent(false);
 
                 for (int i = 0; i < N; i++) // running N consumers at the same time
                 {
@@ -131,22 +118,32 @@ namespace RabbitMQ_Consumer
                     {
                         using (var consumer = new SingleThreadedConsumer(conn))
                         {
-                            consumer.Consume();
-                            waitfor.Wait();
+                            try
+                            {
+                                consumer.Consume();
+                                waitfor.WaitOne();
+                           
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.Out.WriteLine(ex.Message);
+                                Console.Out.WriteLine("Make sure the producer is run before the consumer. The producer has the code which defines the topology for this demo");
+                            }
                         }
                     });
 
                     threads.Add(th);
                     th.Start();
                 }
-                waitfor.Wait();
+
+                Console.ReadKey();
+                waitfor.Set();
 
                 foreach (var t in threads) t.Join();
                 conn.Close();
             }
-            
         }
-        
-        
+
     }
+
 }

@@ -7,6 +7,7 @@ using Newtonsoft.Json;
 using System.Text;
 using System.Threading;
 using System.Collections.Concurrent;
+using Commons;
 
 namespace RabbitMQ_Producer
 {
@@ -14,23 +15,29 @@ namespace RabbitMQ_Producer
     {
         public static IModel ChanConfig(this IModel chan)
         {
+            // now we also declare a dead letter exchange for the messages that were not processed
+           
+            chan.ExchangeDeclare(
+                Commons.Parameters.RabbitMQExchangeName_DLX,
+                ExchangeType.Fanout,
+                durable: false,
+                autoDelete: false,
+                arguments: null
+            );
+
+            // to simplify the topology,
+            // we will use the same dead letter exchange as alternative exchange in case of routing failures
             chan.ExchangeDeclare(
                     exchange: Commons.Parameters.RabbitMQExchangeName,
                     type: ExchangeType.Direct, // change to Fanout to send to several queues
                     durable: false, // no serialization
                     autoDelete: false,
-                    arguments: null
-                    );
-
-            // now we also declare a dead letter exchange for the messages that were not processed
-            chan.ExchangeDeclare(
-                Commons.Parameters.RabbitMQExchangeName_DLX,
-                ExchangeType.Fanout,
-                durable: false,
-                autoDelete: false, 
-                arguments: null
-            );
-
+                    arguments: new Dictionary<string, object>()
+                    {
+                        { "alternate-exchange", Commons.Parameters.RabbitMQExchangeName_DLX }
+                    }
+             );
+            
             chan.QueueDeclare(
                 queue: Commons.Parameters.RabbitMQQueueName,
                 durable: false,
@@ -53,7 +60,13 @@ namespace RabbitMQ_Producer
             chan.QueueBind(
                 queue: Commons.Parameters.RabbitMQQueueName,
                 exchange: Commons.Parameters.RabbitMQExchangeName,
-                routingKey: "");
+                routingKey: "RabbitMQ_Play");
+
+            /**
+             * The dead-lettering process adds an array to the header of each dead-lettered message named x - death.
+             * This array contains an entry for each dead lettering event, identified by a pair of { queue, reason}. 
+             * https://www.rabbitmq.com/dlx.html
+             */
 
             chan.QueueBind(
                 queue: Commons.Parameters.RabbitMQQueueName_DLX,
@@ -61,7 +74,7 @@ namespace RabbitMQ_Producer
                 routingKey: ""
             );
 
-            /// for publisher to get confirmation that the message has been received by the queue:
+            // for publisher to get confirmation that the message has been received by the queue:
             
             chan.ConfirmSelect();
             chan.BasicAcks += (o, args) =>  Console.WriteLine($"Msg confimed {args.DeliveryTag}"); 
@@ -132,7 +145,7 @@ namespace RabbitMQ_Producer
             var msg = JsonConvert.SerializeObject(new Commons.Message()
             {
                 Msg = "Hello World",
-                ThreadID = System.Threading.Thread.CurrentThread.ManagedThreadId,
+                ThreadID = Thread.CurrentThread.ManagedThreadId,
                 MsgID = msg_id,
                 FieldAddedInVersion2 = "Hello World"
             });
@@ -141,7 +154,10 @@ namespace RabbitMQ_Producer
             msgProps.ContentType = "application/json";
             msgProps.CorrelationId = Guid.NewGuid().ToString(); // set a correlation id to the message
 
-            chan.BasicPublish(Commons.Parameters.RabbitMQExchangeName, "", msgProps, Encoding.UTF8.GetBytes(msg));
+            // force some routing failures
+            string routingKey = Parameters.RandomEvent && Parameters.RandomEvent ? "Garbage - to alternate exchange" : "RabbitMQ_Play";
+
+            chan.BasicPublish(Commons.Parameters.RabbitMQExchangeName, routingKey, msgProps, Encoding.UTF8.GetBytes(msg));
         }
 
         static void Main(string[] args)
@@ -150,7 +166,7 @@ namespace RabbitMQ_Producer
             {
                 var tasks = new List<Task>();
 
-                for (int i = 0; i < 10000; i++)
+                for (int i = 0; i < 20000; i++)
                 {
                     tasks.Add(Task.Run(() => { producer.Produce(); }));
                 }
