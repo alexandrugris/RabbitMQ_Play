@@ -2,22 +2,20 @@
 using RabbitMQ.Client;
 using System;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RabbitMQ_Consumer
 {
-    class Consumer : DefaultBasicConsumer, IDisposable
+    class SingleThreadedConsumer : DefaultBasicConsumer, IDisposable
     {
         private IModel chan = null;    
         private int cthread = System.Threading.Thread.CurrentThread.ManagedThreadId;
         private readonly int MAX_RETRY_COUNT = 5;
 
-        public Consumer() : base()
+        public SingleThreadedConsumer(IConnection conn) : base()
         {
-            var conn = Commons.Parameters.RabbitMQConnection;
-
             chan = conn.CreateModel();
-
-            conn.AutoClose = true; // auto-close the connection when there are no more channels
         }
 
         static Random rnd = new Random();
@@ -26,7 +24,7 @@ namespace RabbitMQ_Consumer
         {
             get
             {
-                return rnd.Next() % 10 == 0;
+                return rnd.Next() % 1000 == 0;
             }
         }
 
@@ -76,7 +74,7 @@ namespace RabbitMQ_Consumer
 
         public void Consume()
         {
-            if (cthread != System.Threading.Thread.CurrentThread.ManagedThreadId)
+            if (cthread != Thread.CurrentThread.ManagedThreadId)
                 throw new Exception("Channel reused from a different thread");
 
             chan.QueueDeclare(
@@ -107,12 +105,38 @@ namespace RabbitMQ_Consumer
 
         static void Main(string[] args)
         {
-            using (var consumer = new Consumer())
-            {
-                consumer.Consume();
-                System.Console.ReadKey();                
-                // another way to go is to use the QueuingBasicConsumer(model) and then (BasicDeliveryEventArgs)consumer.Queue.Dequeue(); for extracting the message
+            const int N = 10;
+
+            using (var conn = Commons.Parameters.RabbitMQConnection) {
+
+                var threads = new System.Collections.Generic.List<Thread>();
+
+                var waitfor = Task.Run(() => {
+                    Console.ReadKey();
+                });
+
+                for (int i = 0; i < N; i++) // running N consumers at the same time
+                {
+                    var th = new Thread(() =>
+                    {
+                        using (var consumer = new SingleThreadedConsumer(conn))
+                        {
+                            consumer.Consume();
+                            waitfor.Wait();
+                        }
+                    });
+
+                    threads.Add(th);
+                    th.Start();
+                }
+                waitfor.Wait();
+
+                foreach (var t in threads) t.Join();
+                conn.Close();
             }
+            
         }
+        
+        
     }
 }

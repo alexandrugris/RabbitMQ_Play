@@ -46,14 +46,14 @@ namespace RabbitMQ_Producer
         }
     }
 
-    class Producer : IDisposable
+    class MultithreadedProducer : IDisposable
     {        
         private IConnection conn = null;
         private ConcurrentDictionary<int, IModel> openChannels = new ConcurrentDictionary<int, IModel>();
 
         int msg_id = -1;
 
-        Producer()
+        MultithreadedProducer()
         {
             conn = Commons.Parameters.RabbitMQConnection;
         }
@@ -61,7 +61,7 @@ namespace RabbitMQ_Producer
         #region IDisposable Support
         private bool disposed = false; // To detect redundant calls       
 
-        ~Producer()
+        ~MultithreadedProducer()
         {
             try
             {
@@ -120,7 +120,7 @@ namespace RabbitMQ_Producer
 
         static void Main(string[] args)
         {
-            using (var producer = new Producer())
+            using (var producer = new MultithreadedProducer())
             {
                 var tasks = new List<Task>();
 
