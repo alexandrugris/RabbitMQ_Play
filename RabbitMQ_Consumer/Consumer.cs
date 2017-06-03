@@ -11,7 +11,7 @@ namespace RabbitMQ_Consumer
     {
         private IModel chan = null;    
         private int cthread = System.Threading.Thread.CurrentThread.ManagedThreadId;
-        private readonly int MAX_RETRY_COUNT = 5;
+        private readonly int MAX_RETRY_COUNT = 1;
 
         public SingleThreadedConsumer(IConnection conn) : base()
         {
@@ -24,7 +24,7 @@ namespace RabbitMQ_Consumer
         {
             get
             {
-                return rnd.Next() % 1000 == 0;
+                return rnd.Next() % 10 == 0;
             }
         }
 
@@ -33,43 +33,59 @@ namespace RabbitMQ_Consumer
             if (properties.ContentType != "application/json")
                 throw new ArgumentException("We handle only json messages");
 
-            try
-            {
+            if (!Crash) {
+
                 var msg = JsonConvert.DeserializeObject<Commons.Message>(Encoding.UTF8.GetString(body));
-
-                if (Crash)
-                    throw new Exception($"Controlled crash: {deliveryTag}");
-
                 // Console.WriteLine($"Message: {msg.Msg} from thread: {msg.ThreadID}, version: {msg.Version}");
-
                 chan.BasicAck(deliveryTag, false); // send ack only for this message and only if no error so far
             }
-            catch (Exception e)
+            else // error condition
             {
-                Console.Out.WriteLine(e.Message);
                 // re-queuing in controlled way. chan.BasicNack() just requeues, but it is impossible to keep count of the number of retries
                 // the following strategy, however, will place the message at the end of the queue.
                 // if we were to use chan.BasicNack, the message would have been just pushed back and retried immediately.
 
-                Requeue(consumerTag, deliveryTag, exchange, routingKey, properties, body);
+                if (redelivered || GetRetryCount(properties) < MAX_RETRY_COUNT)
+                {
+                    Requeue(consumerTag, deliveryTag, exchange, routingKey, properties, body);
+                }
+                else
+                {
+                    // first time simply put it back in the queue for another try
+                    chan.BasicNack(deliveryTag, false, true);
+                }
             }            
+        }
+
+        private int GetRetryCount(IBasicProperties properties)
+        {
+            return  (int?)properties.Headers?["Retries"] ?? MAX_RETRY_COUNT;
+        }
+
+        private void SetRetryCount(IBasicProperties properties, int retryCount)
+        {
+            properties.Headers = properties.Headers ?? new System.Collections.Generic.Dictionary<string, object>();
+            properties.Headers["Retries"] = retryCount;
         }
 
         private void Requeue(string consumerTag, ulong deliveryTag, string exchange, string routingKey, IBasicProperties properties, byte[] body)
         {
-            int retryCount = (int?)properties.Headers?["Retries"] ?? MAX_RETRY_COUNT;
+            int retryCount = GetRetryCount(properties);
+
+            Console.WriteLine($"Retry count: {retryCount}");
 
             if (retryCount > 0)
             {
-                properties.Headers = properties.Headers ?? new System.Collections.Generic.Dictionary<string, object>();
-                properties.Headers["Retries"] = --retryCount;
-
+                SetRetryCount(properties, --retryCount);
+               
                 chan.BasicPublish(exchange, routingKey, properties, body);
                 chan.WaitForConfirmsOrDie(); // this is slow, but we need to make sure somehow the message reaches the queue back
-
+                chan.BasicAck(deliveryTag, false);
             }
-            // ack this message; 
-            chan.BasicAck(deliveryTag, false);
+            else
+            {
+                chan.BasicNack(deliveryTag, false, false); // reject the message to dead letter queue.
+            }
         }
 
         public void Consume()
@@ -77,14 +93,8 @@ namespace RabbitMQ_Consumer
             if (cthread != Thread.CurrentThread.ManagedThreadId)
                 throw new Exception("Channel reused from a different thread");
 
-            chan.QueueDeclare(
-                    queue: Commons.Parameters.RabbitMQQueueName,
-                    durable: false,
-                    exclusive: false, 
-                    autoDelete: false, 
-                    arguments: null
-                    );
-
+            // topology of created in the producer
+            
             chan.BasicQos(
                 prefetchSize: 0, // no limit
                 prefetchCount: 1, // 1 by 1

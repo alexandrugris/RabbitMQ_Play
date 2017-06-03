@@ -6,7 +6,9 @@ namespace Commons
     {
         public const string RabbitMQConnectionString = "amqp://guest:guest@localhost:5672";
         public const string RabbitMQExchangeName  = "alexandrugris.1st_exchange";
+        public const string RabbitMQExchangeName_DLX = RabbitMQExchangeName + "_dead_letter_exchange";
         public const string RabbitMQQueueName = "alexandrugris.1st_queue";
+        public const string RabbitMQQueueName_DLX = RabbitMQQueueName + "_dead_letter_exchange";
 
         /// <summary>
         /// TODO

@@ -22,26 +22,52 @@ namespace RabbitMQ_Producer
                     arguments: null
                     );
 
+            // now we also declare a dead letter exchange for the messages that were not processed
+            chan.ExchangeDeclare(
+                Commons.Parameters.RabbitMQExchangeName_DLX,
+                ExchangeType.Fanout,
+                durable: false,
+                autoDelete: false, 
+                arguments: null
+            );
+
             chan.QueueDeclare(
                 queue: Commons.Parameters.RabbitMQQueueName,
                 durable: false,
                 exclusive: false,
                 autoDelete: false,
+                arguments: new Dictionary<string, object>()
+                {
+                    { "x-dead-letter-exchange", Commons.Parameters.RabbitMQExchangeName_DLX }
+                }
+            );
+
+            chan.QueueDeclare(
+                queue: Commons.Parameters.RabbitMQQueueName_DLX,
+                durable: false,
+                exclusive: false,
+                autoDelete: false,
                 arguments: null
-                );
+            );
 
             chan.QueueBind(
                 queue: Commons.Parameters.RabbitMQQueueName,
                 exchange: Commons.Parameters.RabbitMQExchangeName,
                 routingKey: "");
 
+            chan.QueueBind(
+                queue: Commons.Parameters.RabbitMQQueueName_DLX,
+                exchange: Commons.Parameters.RabbitMQExchangeName_DLX,
+                routingKey: ""
+            );
+
             /// for publisher to get confirmation that the message has been received by the queue:
-
-
+            
             chan.ConfirmSelect();
             chan.BasicAcks += (o, args) =>  Console.WriteLine($"Msg confimed {args.DeliveryTag}"); 
             chan.BasicNacks += (o, args) => Console.WriteLine($"Error sending message to queue {args.DeliveryTag}");
 
+            
             return chan;
         }
     }
