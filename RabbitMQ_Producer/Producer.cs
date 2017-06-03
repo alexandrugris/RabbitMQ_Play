@@ -6,12 +6,52 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using System.Text;
 using System.Threading;
+using System.Collections.Concurrent;
 
 namespace RabbitMQ_Producer
 {
+    static class MyModelConfig
+    {
+        public static IModel ChanConfig(this IModel chan)
+        {
+            chan.ExchangeDeclare(
+                    exchange: Commons.Parameters.RabbitMQExchangeName,
+                    type: ExchangeType.Direct, // change to Fanout to send to several queues
+                    durable: false, // no serialization
+                    autoDelete: false,
+                    arguments: null
+                    );
+
+            chan.QueueDeclare(
+                queue: Commons.Parameters.RabbitMQQueueName,
+                durable: false,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null
+                );
+
+            chan.QueueBind(
+                queue: Commons.Parameters.RabbitMQQueueName,
+                exchange: Commons.Parameters.RabbitMQExchangeName,
+                routingKey: "");
+
+            /// for publisher to get confirmation that the message has been received by the queue:
+
+
+            chan.ConfirmSelect();
+            chan.BasicAcks += (o, args) =>  Console.WriteLine($"Msg confimed {args.DeliveryTag}"); 
+            chan.BasicNacks += (o, args) => Console.WriteLine($"Error sending message to queue {args.DeliveryTag}");
+
+            return chan;
+        }
+    }
+
     class Producer : IDisposable
     {        
         private IConnection conn = null;
+        private ConcurrentDictionary<int, IModel> openChannels = new ConcurrentDictionary<int, IModel>();
+
+        int msg_id = -1;
 
         Producer()
         {
@@ -40,71 +80,23 @@ namespace RabbitMQ_Producer
             if (disposed)
                 return;
 
-            if(conn.IsOpen)
-                conn.Close(); // TODO: check with channels
+            if (conn.IsOpen)
+            {
+                foreach (var chan in openChannels.Values) {
+                    chan.Close();
+                    chan.Dispose();
+                }
+
+                openChannels.Clear();
+                conn.Close();
+            }
         }
         #endregion
 
-        int msg_id = -1;
-
-        private void ChanConfig(IModel chan)
-        {
-            chan.ExchangeDeclare(
-                    exchange: Commons.Parameters.RabbitMQExchangeName,
-                    type: ExchangeType.Direct, // change to Fanout to send to several queues
-                    durable: false, // no serialization
-                    autoDelete: false,
-                    arguments: null
-                    );
-
-            chan.QueueDeclare(
-                queue: Commons.Parameters.RabbitMQQueueName,
-                durable: false,
-                exclusive: false, 
-                autoDelete: false, 
-                arguments: null
-                );
-
-            chan.QueueBind(
-                queue: Commons.Parameters.RabbitMQQueueName,
-                exchange: Commons.Parameters.RabbitMQExchangeName,
-                routingKey: "");
-
-            /// for publisher to get confirmation that the message has been received by the queue:
-
-            
-            chan.ConfirmSelect();
-            chan.BasicAcks += (o, args) =>
-            {
-                bool closed = chan.IsClosed; // msg is received even after the channel is closed
-                // https://stackoverflow.com/questions/20095049/rabbitmq-deliverytag-always-1 - why?
-                Console.WriteLine($"Msg confimed {args.DeliveryTag}");
-            };
-            chan.BasicNacks += (o, args) => Console.WriteLine($"Error sending message to queue {args.DeliveryTag}");
-        }
-        
-
         public void Produce()
         {
-            bool msg_sent = false;
-            while (!msg_sent)
-            {
-                try
-                {
-                    using (var chan = conn.CreateModel()) // this is a little bit forced because the threads will be recycled
-                    {
-
-                        ChanConfig(chan);
-                        ChanSendMessage(chan);
-                        msg_sent = true;
-
-                    }
-                }
-                catch (Exception)
-                {
-                    Thread.Sleep(1000);
-                }
-            }
+            var chan = openChannels.GetOrAdd(Thread.CurrentThread.ManagedThreadId, (thid) => conn.CreateModel().ChanConfig());
+            ChanSendMessage(chan);
         }
 
         private void ChanSendMessage(IModel chan)

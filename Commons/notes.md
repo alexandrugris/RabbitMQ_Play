@@ -7,7 +7,7 @@ Run the RabbitMQ docker container with the management console started:
 
 `docker run -d --rm --hostname my-rabbit -p 4369:4369 -p 15671-15672:15671-15672 -p 5672:5672 --name my_rabbit_mq rabbitmq:3-management` 
 
-The corresponding connetion string is `"amqp://guest:guest@localhost:5672"` and the management URL: `http://localhost:15672/#/queues/%2F/alexandrugris.1st_queue`
+The corresponding connetion string is `"amqp://guest:guest@localhost:5672"` and the management URL: `http://localhost:15672/#/ `
 
 # Basic concepts
 
