@@ -16,7 +16,6 @@ namespace RabbitMQ_Producer
         public static IModel ChanConfig(this IModel chan)
         {
             // now we also declare a dead letter exchange for the messages that were not processed
-           
             chan.ExchangeDeclare(
                 Commons.Parameters.RabbitMQExchangeName_DLX,
                 ExchangeType.Fanout,
@@ -74,8 +73,7 @@ namespace RabbitMQ_Producer
                 routingKey: ""
             );
 
-            // for publisher to get confirmation that the message has been received by the queue:
-            
+            // for publisher to get confirmation that the message has been received by the queue: 
             chan.ConfirmSelect();
             chan.BasicAcks += (o, args) =>  Console.WriteLine($"Msg confimed {args.DeliveryTag}"); 
             chan.BasicNacks += (o, args) => Console.WriteLine($"Error sending message to queue {args.DeliveryTag}");
@@ -138,6 +136,19 @@ namespace RabbitMQ_Producer
             ChanSendMessage(chan);
         }
 
+        /// <summary>
+        /// Together with the dead letter queue can be used to implement the scheduled delivery pattern
+        /// </summary>
+        /// <param name="when"></param>
+        /// <returns></returns>
+        private string GetExpirationAtTimeMillisAsString(DateTime when)
+        {
+            double millis = (when - DateTime.Now).TotalMilliseconds;
+            millis = (millis > 0) ? millis : TimeSpan.FromMinutes(1).TotalMilliseconds;
+            return ((int)millis).ToString();
+            
+        }
+
         private void ChanSendMessage(IModel chan)
         {
             Interlocked.Increment(ref msg_id);
@@ -154,9 +165,11 @@ namespace RabbitMQ_Producer
             msgProps.ContentType = "application/json";
             msgProps.CorrelationId = Guid.NewGuid().ToString(); // set a correlation id to the message
 
+            // scheduled delivery pattern in conjunction with the dead letter queue
+            msgProps.Expiration = GetExpirationAtTimeMillisAsString(DateTime.Today.AddHours(12)); // send messages today at noon
+
             // force some routing failures
             string routingKey = Parameters.RandomEvent && Parameters.RandomEvent ? "Garbage - to alternate exchange" : "RabbitMQ_Play";
-
             chan.BasicPublish(Commons.Parameters.RabbitMQExchangeName, routingKey, msgProps, Encoding.UTF8.GetBytes(msg));
         }
 
